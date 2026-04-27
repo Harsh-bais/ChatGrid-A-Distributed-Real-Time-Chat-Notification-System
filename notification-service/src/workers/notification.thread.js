@@ -45,6 +45,8 @@ const sendOfflineNotification = async ({ recipientId, message, sender, chat }) =
       body,
       channel: 'offline-log',
       status: 'sent',
+      isRead: false,
+      readAt: null,
       sentAt: new Date(),
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },

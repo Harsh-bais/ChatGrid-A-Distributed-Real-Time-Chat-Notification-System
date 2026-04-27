@@ -19,6 +19,11 @@ const messageSchema = new mongoose.Schema(
     queuedAt: { type: Date, default: Date.now },
     deliveredAt: Date,
     processedAt: Date,
+    processingMeta: {
+      wordCount: Number,
+      keywordHits: [String],
+      containsLink: Boolean,
+    },
     deletedForEveryoneAt: Date,
   },
   { timestamps: true },

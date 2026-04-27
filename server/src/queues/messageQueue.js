@@ -35,10 +35,10 @@ export const enqueueMessageJob = (name, data) => messageQueue.add(name, data);
 
 export const enqueueDeliveryJob = (name, data) =>
   deliveryQueue.add(name, data, {
-    jobId: `${name}:${data.messageId}`,
+    jobId: `${name.replace(/[:\s]+/g, '-')}-${data.messageId}`,
   });
 
 export const enqueueNotificationJob = (name, data) =>
   notificationQueue.add(name, data, {
-    jobId: `${name}:${data.messageId}`,
+    jobId: `${name.replace(/[:\s]+/g, '-')}-${data.messageId}`,
   });

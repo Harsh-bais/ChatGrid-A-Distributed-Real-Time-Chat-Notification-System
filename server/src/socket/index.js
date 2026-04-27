@@ -5,10 +5,12 @@ import { createRedisConnection } from '../config/redis.js';
 import { User } from '../models/User.js';
 import {
   getClusterConnectionCount,
+  listOnlineUserIds,
   registerConnection,
   unregisterConnection,
 } from '../realtime/connectionRegistry.js';
 import { startDeliveryWorker } from '../realtime/deliveryWorker.js';
+import { listUserNotifications } from '../services/notificationService.js';
 import { logger } from '../utils/logger.js';
 import { registerChatSocket } from './chatSocket.js';
 import { socketAuth } from './socketAuth.js';
@@ -36,11 +38,18 @@ export const createSocketServer = async (httpServer) => {
     });
 
     await registerConnection({ userId: socket.user._id.toString(), socketId: socket.id });
+    const [onlineUserIds, notifications] = await Promise.all([
+      listOnlineUserIds(),
+      listUserNotifications(socket.user._id, 50),
+    ]);
+
     socket.emit('connection:ready', {
       socketId: socket.id,
       userId: socket.user._id,
       instanceId: env.instanceId,
     });
+    socket.emit('presence:snapshot', { userIds: onlineUserIds });
+    socket.emit('notifications:sync', { notifications });
     io.emit('presence:online', { userId: socket.user._id });
     registerChatSocket(io, socket);
 

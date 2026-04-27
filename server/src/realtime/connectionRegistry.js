@@ -44,3 +44,44 @@ export const getClusterConnectionCount = async (userId) => {
     return 0;
   }
 };
+
+export const listOnlineUserIds = async () => {
+  try {
+    const userIds = new Set();
+    let cursor = '0';
+
+    do {
+      const [nextCursor, keys] = await redis.scan(
+        cursor,
+        'MATCH',
+        'socket:user:*:connections',
+        'COUNT',
+        100,
+      );
+      cursor = nextCursor;
+
+      if (keys.length === 0) {
+        continue;
+      }
+
+      const pipeline = redis.pipeline();
+      keys.forEach((key) => pipeline.hlen(key));
+      const counts = await pipeline.exec();
+
+      keys.forEach((key, index) => {
+        const count = Number(counts?.[index]?.[1] || 0);
+        if (count > 0) {
+          const match = key.match(/^socket:user:(.+):connections$/);
+          if (match?.[1]) {
+            userIds.add(match[1]);
+          }
+        }
+      });
+    } while (cursor !== '0');
+
+    return Array.from(userIds);
+  } catch (err) {
+    logger.warn('failed to list online user ids', { error: err.message });
+    return [];
+  }
+};

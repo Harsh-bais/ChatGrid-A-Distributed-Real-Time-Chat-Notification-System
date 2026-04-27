@@ -5,6 +5,24 @@ import { Message } from '../models/Message.js';
 
 let connected = false;
 
+const extractProcessingMeta = (body) => {
+  const words = body
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((word) => word.trim())
+    .filter(Boolean);
+
+  const keywordHits = Array.from(
+    new Set(words.filter((word) => word.length >= 6)),
+  ).slice(0, 5);
+
+  return {
+    wordCount: words.length,
+    keywordHits,
+    containsLink: /https?:\/\//i.test(body),
+  };
+};
+
 const ensureDb = async () => {
   if (connected) return;
   await mongoose.connect(env.mongoUri);
@@ -14,9 +32,18 @@ const ensureDb = async () => {
 const processors = {
   'message.created': async ({ messageId }) => {
     await ensureDb();
+    const existing = await Message.findById(messageId).select('body');
+    if (!existing) {
+      throw new Error(`Message not found: ${messageId}`);
+    }
+
+    const processingMeta = extractProcessingMeta(existing.body);
     const message = await Message.findByIdAndUpdate(
       messageId,
-      { processedAt: new Date() },
+      {
+        processedAt: new Date(),
+        processingMeta,
+      },
       { new: true },
     );
 
@@ -26,8 +53,12 @@ const processors = {
 
     return {
       messageId,
-      processedAt: message.processedAt,
-      bodyLength: message.body.length,
+      processedAt: message.processedAt?.toISOString?.() || new Date().toISOString(),
+      processingMeta: {
+        wordCount: processingMeta.wordCount,
+        keywordHits: [...processingMeta.keywordHits],
+        containsLink: processingMeta.containsLink,
+      },
     };
   },
 };
