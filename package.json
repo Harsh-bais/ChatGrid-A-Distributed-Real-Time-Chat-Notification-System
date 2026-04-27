@@ -1,0 +1,23 @@
+{
+  "name": "distributed-realtime-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full-stack distributed real-time chat application with React, Express, Socket.IO, MongoDB, Redis, and BullMQ.",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace server\" \"npm run dev --workspace worker\" \"npm run dev --workspace notification-service\" \"npm run dev --workspace client\"",
+    "install:all": "npm install --workspaces",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "workspaces": [
+    "client",
+    "server",
+    "worker",
+    "notification-service"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
