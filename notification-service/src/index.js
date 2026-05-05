@@ -6,14 +6,27 @@ import { ThreadPool } from './threadPool.js';
 import { logger } from './utils/logger.js';
 
 const threadPool = new ThreadPool(env.threadCount);
+const serviceLogger = logger.child({
+  component: 'notification-worker',
+  queue: 'notifications',
+});
 
 const start = async () => {
   await connectDb();
-  logger.info('MongoDB connected');
+  serviceLogger.info('MongoDB connected');
 
   const worker = new Worker(
     'notifications',
-    async (job) => threadPool.run(job.name, job.data),
+    async (job) => {
+      serviceLogger.info('notification job started', {
+        jobId: job.id,
+        name: job.name,
+        traceId: job.data?.traceId,
+        messageId: job.data?.messageId,
+        chatId: job.data?.chatId,
+      });
+      return threadPool.run(job.name, job.data);
+    },
     {
       connection: createRedisConnection(),
       concurrency: env.threadCount * 2,
@@ -21,33 +34,39 @@ const start = async () => {
   );
 
   worker.on('completed', (job, result) => {
-    logger.info('notification job completed', {
+    serviceLogger.info('notification job completed', {
       jobId: job.id,
       name: job.name,
+      traceId: job.data?.traceId,
+      messageId: job.data?.messageId,
+      chatId: job.data?.chatId,
       result,
     });
   });
 
   worker.on('failed', (job, err) => {
-    logger.error('notification job failed', {
+    serviceLogger.error('notification job failed', {
       jobId: job?.id,
       name: job?.name,
+      traceId: job?.data?.traceId,
+      messageId: job?.data?.messageId,
+      chatId: job?.data?.chatId,
       attemptsMade: job?.attemptsMade,
       attemptsConfigured: job?.opts?.attempts,
-      error: err.message,
+      error: err,
     });
   });
 
   worker.on('stalled', (jobId) => {
-    logger.warn('notification job stalled and will be recovered by BullMQ', { jobId });
+    serviceLogger.warn('notification job stalled and will be recovered by BullMQ', { jobId });
   });
 
   worker.on('error', (err) => {
-    logger.error('notification worker error', err.message);
+    serviceLogger.error('notification worker error', { error: err });
   });
 
   const shutdown = async () => {
-    logger.info('shutting down');
+    serviceLogger.info('shutting down');
     await worker.close();
     await threadPool.close();
     process.exit(0);
@@ -56,7 +75,7 @@ const start = async () => {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  logger.info('notification service started', {
+  serviceLogger.info('notification service started', {
     queue: 'notifications',
     threadCount: env.threadCount,
     concurrency: env.threadCount * 2,
@@ -64,6 +83,6 @@ const start = async () => {
 };
 
 start().catch((err) => {
-  logger.error('failed to start notification service', err);
+  serviceLogger.error('failed to start notification service', { error: err });
   process.exit(1);
 });

@@ -44,7 +44,7 @@ const writeLog = (level, message, meta = {}) => {
   const line = JSON.stringify({
     timestamp: new Date().toISOString(),
     level,
-    service: 'notification-service',
+    service: 'worker',
     pid: process.pid,
     message,
     ...normalizeMeta(meta),

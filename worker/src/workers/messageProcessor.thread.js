@@ -30,7 +30,7 @@ const ensureDb = async () => {
 };
 
 const processors = {
-  'message.created': async ({ messageId }) => {
+  'message.created': async ({ messageId, traceId }) => {
     await ensureDb();
     const existing = await Message.findById(messageId).select('body');
     if (!existing) {
@@ -52,6 +52,7 @@ const processors = {
     }
 
     return {
+      traceId,
       messageId,
       processedAt: message.processedAt?.toISOString?.() || new Date().toISOString(),
       processingMeta: {

@@ -5,6 +5,7 @@ dotenv.config();
 export const env = {
   port: Number(process.env.PORT || 4000),
   instanceId: process.env.INSTANCE_ID || `server-${process.pid}`,
+  logLevel: process.env.LOG_LEVEL || 'info',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/pdc_chat',
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',

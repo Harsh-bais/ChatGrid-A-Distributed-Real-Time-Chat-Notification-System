@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import { createRedisConnection } from '../config/redis.js';
+import { logger } from '../utils/logger.js';
 
 export const messageQueue = new Queue('messages', {
   connection: createRedisConnection(),
@@ -31,14 +32,49 @@ export const notificationQueue = new Queue('notifications', {
   },
 });
 
-export const enqueueMessageJob = (name, data) => messageQueue.add(name, data);
+const queueLogger = logger.child({ component: 'queue-producer' });
 
-export const enqueueDeliveryJob = (name, data) =>
-  deliveryQueue.add(name, data, {
+export const enqueueMessageJob = async (name, data) => {
+  const job = await messageQueue.add(name, data);
+  queueLogger.info('queue job enqueued', {
+    queue: 'messages',
+    name,
+    jobId: job.id,
+    traceId: data.traceId,
+    messageId: data.messageId,
+    chatId: data.chatId,
+  });
+  return job;
+};
+
+export const enqueueDeliveryJob = async (name, data) => {
+  const job = await deliveryQueue.add(name, data, {
     jobId: `${name.replace(/[:\s]+/g, '-')}-${data.messageId}`,
   });
+  queueLogger.info('queue job enqueued', {
+    queue: 'message-delivery',
+    name,
+    jobId: job.id,
+    traceId: data.traceId,
+    messageId: data.messageId,
+    chatId: data.chatId,
+    recipientCount: data.recipientIds?.length || 0,
+  });
+  return job;
+};
 
-export const enqueueNotificationJob = (name, data) =>
-  notificationQueue.add(name, data, {
+export const enqueueNotificationJob = async (name, data) => {
+  const job = await notificationQueue.add(name, data, {
     jobId: `${name.replace(/[:\s]+/g, '-')}-${data.messageId}`,
   });
+  queueLogger.info('queue job enqueued', {
+    queue: 'notifications',
+    name,
+    jobId: job.id,
+    traceId: data.traceId,
+    messageId: data.messageId,
+    chatId: data.chatId,
+    recipientCount: data.recipientIds?.length || 0,
+  });
+  return job;
+};

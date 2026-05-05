@@ -336,6 +336,28 @@ npm run lint --workspace client
 docker ps
 ```
 
+## Structured Logging And Debugging
+
+The system now emits structured JSON logs across:
+
+- `server`
+- `worker`
+- `notification-service`
+
+For message delivery tracing, the server generates a `traceId` during `message:send` and propagates it through:
+
+- message persistence
+- queue enqueue
+- message post-processing
+- delivery worker execution
+- notification worker execution
+
+This makes it possible to trace one message end-to-end across services.
+
+Detailed debugging workflows are documented here:
+
+- [docs/debugging-workflows.md](docs/debugging-workflows.md)
+
 ## Fault Tolerance Notes
 
 - messages are persisted before distributed follow-up work

@@ -16,6 +16,11 @@ import { Message } from '../models/Message.js';
 import { logger } from '../utils/logger.js';
 
 export const startDeliveryWorker = (io) => {
+  const deliveryLogger = logger.child({
+    component: 'delivery-worker',
+    queue: 'message-delivery',
+  });
+
   const worker = new Worker(
     'message-delivery',
     async (job) => {
@@ -23,7 +28,18 @@ export const startDeliveryWorker = (io) => {
         throw new Error(`Unknown delivery job: ${job.name}`);
       }
 
-      const { messageId, chatId, senderId, recipientIds } = job.data;
+      const { messageId, chatId, senderId, recipientIds, traceId } = job.data;
+      const jobLogger = deliveryLogger.child({
+        traceId,
+        jobId: job.id,
+        name: job.name,
+        messageId,
+        chatId,
+      });
+      jobLogger.info('delivery job started', {
+        senderId,
+        recipientCount: recipientIds.length,
+      });
 
       // Minimal fetch — we only need the message for the sender notification
       const [message, chat] = await Promise.all([
@@ -53,7 +69,10 @@ export const startDeliveryWorker = (io) => {
         deliveredAt: deliveredAt.toISOString(),
       });
 
-      logger.info('delivery job completed', { messageId, chatId, recipientCount: recipientIds.length });
+      jobLogger.info('delivery job completed', {
+        recipientCount: recipientIds.length,
+        deliveredAt: deliveredAt.toISOString(),
+      });
       return { delivered: true, messageId, chatId };
     },
     {
@@ -63,17 +82,22 @@ export const startDeliveryWorker = (io) => {
   );
 
   worker.on('failed', (job, err) => {
-    logger.error('delivery job failed', {
+    deliveryLogger.error('delivery job failed', {
       jobId: job?.id,
+      traceId: job?.data?.traceId,
+      messageId: job?.data?.messageId,
+      chatId: job?.data?.chatId,
       attemptsMade: job?.attemptsMade,
       error: err.message,
     });
   });
 
   worker.on('error', (err) => {
-    logger.error('delivery worker error', err);
+    deliveryLogger.error('delivery worker error', { error: err });
   });
 
-  logger.info('message delivery worker started');
+  deliveryLogger.info('message delivery worker started', {
+    concurrency: Number(process.env.DELIVERY_CONCURRENCY || 20),
+  });
   return worker;
 };

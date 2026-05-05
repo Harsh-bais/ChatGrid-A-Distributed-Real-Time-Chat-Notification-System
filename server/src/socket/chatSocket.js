@@ -15,6 +15,7 @@
  *    and marks deliveredTo/deliveredAt in DB. It no longer emits message:new.
  */
 
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Chat } from '../models/Chat.js';
 import { Message } from '../models/Message.js';
@@ -53,6 +54,11 @@ const serializeMessage = (messageId) =>
 export const registerChatSocket = (io, socket) => {
   // Every connected socket gets a personal room so we can reach it directly.
   socket.join(`user:${socket.user._id}`);
+  const socketLogger = logger.child({
+    component: 'chat-socket',
+    socketId: socket.id,
+    userId: socket.user._id.toString(),
+  });
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -70,13 +76,12 @@ export const registerChatSocket = (io, socket) => {
     try {
       const { chatId } = chatEventSchema.parse(payload);
       await joinChat(chatId);
-      logger.info('socket joined chat room', {
-        socketId: socket.id,
-        userId: socket.user._id.toString(),
+      socketLogger.info('socket joined chat room', {
         chatId,
       });
       ack?.({ ok: true, chatId });
     } catch (err) {
+      socketLogger.warn('chat join rejected', { payload, error: err });
       ack?.({ ok: false, message: err.message });
     }
   });
@@ -91,22 +96,34 @@ export const registerChatSocket = (io, socket) => {
           await joinChat(chatId);
           joinedChatIds.push(chatId);
         } catch (err) {
-          logger.warn('skipped reconnect room sync', {
+          socketLogger.warn('skipped reconnect room sync', {
             chatId,
-            error: err.message,
+            error: err,
           });
         }
       }
+      socketLogger.info('reconnect room sync completed', {
+        requestedChatIds: chatIds.length,
+        joinedChatIds: joinedChatIds.length,
+      });
       ack?.({ ok: true, joinedChatIds });
     } catch (err) {
+      socketLogger.warn('reconnect room sync failed', { payload, error: err });
       ack?.({ ok: false, message: err.message });
     }
   });
 
   // ─── message:send — THE CRITICAL FIX ────────────────────────────────────────
   socket.on('message:send', async (payload, ack) => {
+    const traceId = randomUUID();
+    const deliveryLogger = socketLogger.child({ traceId, event: 'message.send' });
+
     try {
       const { chatId, body } = sendMessageSchema.parse(payload);
+      deliveryLogger.info('message send received', {
+        chatId,
+        bodyLength: body.length,
+      });
 
       // 1. Auth check — do a lean query (no mongoose overhead for field checks)
       const chat = await Chat.findById(chatId).lean();
@@ -123,6 +140,10 @@ export const registerChatSocket = (io, socket) => {
         deliveredAt: null,
         readBy: [{ user: socket.user._id, readAt: new Date() }],
         readCount: 1,
+      });
+      deliveryLogger.info('message persisted', {
+        messageId: message._id.toString(),
+        chatId,
       });
 
       // 3. Update chat.lastMessage (fire and forget — don't block the response)
@@ -141,6 +162,11 @@ export const registerChatSocket = (io, socket) => {
       const recipientIds = chat.participants
         .map((id) => id.toString())
         .filter((id) => id !== socket.user._id.toString());
+      deliveryLogger.info('message broadcast prepared', {
+        messageId: message._id.toString(),
+        recipientIds,
+        recipientCount: recipientIds.length,
+      });
 
       recipientIds.forEach((recipientId) => {
         io.to(`user:${recipientId}`).emit('chat:updated', {
@@ -151,7 +177,7 @@ export const registerChatSocket = (io, socket) => {
 
       // 7. ✅ FIX: ACK the sender immediately with the populated message.
       //    The client adds it to local state via the ack callback — no page refresh needed.
-      ack?.({ ok: true, message: populated });
+      ack?.({ ok: true, message: populated, traceId });
 
       // 8. Queue background jobs AFTER responding (non-blocking).
       //    deliveryWorker now only handles: marking deliveredTo in DB + emitting
@@ -165,29 +191,32 @@ export const registerChatSocket = (io, socket) => {
           messageId: messageIdStr,
           chatId: chatIdStr,
           senderId: senderIdStr,
+          traceId,
         }),
         enqueueDeliveryJob('message.deliver', {
           messageId: messageIdStr,
           chatId: chatIdStr,
           senderId: senderIdStr,
           recipientIds,
+          traceId,
         }),
         enqueueNotificationJob('notification.message.created', {
           messageId: messageIdStr,
           chatId: chatIdStr,
           senderId: senderIdStr,
           recipientIds,
+          traceId,
         }),
       ]);
 
-      logger.info('message sent and broadcast', {
+      deliveryLogger.info('message send completed', {
         messageId: messageIdStr,
         chatId: chatIdStr,
         recipientCount: recipientIds.length,
       });
     } catch (err) {
-      logger.error('message:send error', { error: err.message });
-      ack?.({ ok: false, message: err.message });
+      deliveryLogger.error('message send failed', { payload, error: err });
+      ack?.({ ok: false, message: err.message, traceId });
     }
   });
 
@@ -195,6 +224,7 @@ export const registerChatSocket = (io, socket) => {
   socket.on('typing:start', (payload) => {
     const parsed = chatEventSchema.safeParse(payload);
     if (parsed.success) {
+      socketLogger.debug('typing start emitted', { chatId: parsed.data.chatId });
       socket.to(`chat:${parsed.data.chatId}`).emit('typing:start', {
         chatId: parsed.data.chatId,
         user: { _id: socket.user._id, name: socket.user.name },
@@ -205,6 +235,7 @@ export const registerChatSocket = (io, socket) => {
   socket.on('typing:stop', (payload) => {
     const parsed = chatEventSchema.safeParse(payload);
     if (parsed.success) {
+      socketLogger.debug('typing stop emitted', { chatId: parsed.data.chatId });
       socket.to(`chat:${parsed.data.chatId}`).emit('typing:stop', {
         chatId: parsed.data.chatId,
         userId: socket.user._id,
@@ -214,6 +245,7 @@ export const registerChatSocket = (io, socket) => {
 
   // ─── message:read ────────────────────────────────────────────────────────────
   socket.on('message:read', async (payload, ack) => {
+    const readLogger = socketLogger.child({ event: 'message.read' });
     try {
       const { chatId } = chatEventSchema.parse(payload);
       const chat = await Chat.findById(chatId).lean();
@@ -247,8 +279,13 @@ export const registerChatSocket = (io, socket) => {
         messageIds: updatedMessages.map((m) => m._id.toString()),
       });
 
+      readLogger.info('message read broadcast completed', {
+        chatId,
+        updatedCount: updatedMessages.length,
+      });
       ack?.({ ok: true });
     } catch (err) {
+      readLogger.error('message read failed', { payload, error: err });
       ack?.({ ok: false, message: err.message });
     }
   });

@@ -61,7 +61,7 @@ const sendOfflineNotification = async ({ recipientId, message, sender, chat }) =
 };
 
 const processors = {
-  'notification.message.created': async ({ messageId, chatId, senderId, recipientIds }) => {
+  'notification.message.created': async ({ messageId, chatId, senderId, recipientIds, traceId }) => {
     await ensureConnections();
 
     const [message, chat, sender] = await Promise.all([
@@ -88,6 +88,7 @@ const processors = {
     );
 
     return {
+      traceId,
       messageId,
       recipientCount: recipientIds.length,
       offlineCount: offlineRecipientIds.length,
